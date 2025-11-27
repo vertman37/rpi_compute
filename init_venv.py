@@ -10,6 +10,12 @@ from pathlib import Path
 REQ = "requirements.txt"
 VENV_DIR = ".venv"
 
+
+#to just run the code. (not command python)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(script_dir)
+
+
 def run(cmd):
     print("RUN:", " ".join(cmd))
     subprocess.check_call(cmd)
