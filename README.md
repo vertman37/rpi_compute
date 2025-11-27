@@ -6,9 +6,9 @@ the codes chdir-s to where the code is located.
 
 run or from command:
 1. python init_venv.py
-2. python venv.py
+2. python vrun.py
 
 you can also run the code by argument:
-venv.py CODENAME
+vrun.py CODENAME
 
 ![you may see particles explodes](save_256.png)
