@@ -33,6 +33,11 @@ if platform.system() == "Linux":
         glMemoryBarrier = _gl.glMemoryBarrier
         glVertexAttribPointer = _gl.glVertexAttribPointer
         
+        #it works!
+        glTexStorage2D = _gl.glTexStorage2D
+        glTexStorage3D = _gl.glTexStorage3D
+        
+        
         # glGetUniformLocation = _gl.glGetUniformLocation
         # glProgramUniformMatrix4fv = _gl.glProgramUniformMatrix4fv
         
@@ -85,9 +90,9 @@ window = pyglet.window.Window(config=config)
 #glPointSize not working in rpi
 print('glDispatchCompute',bool(glDispatchCompute))
 print('glProgramUniformMatrix4fv',bool(glProgramUniformMatrix4fv))
-print("GL_MAX_COMPUTE_SHARED_MEMORY_SIZE", glGetIntegerv(GL_MAX_COMPUTE_SHARED_MEMORY_SIZE))
-print("GL_MAX_COMPUTE_WORK_GROUP_SIZE", glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE,0))
-
+print("GL_MAX_COMPUTE_SHARED_MEMORY_SIZE", glGetIntegerv(GL_MAX_COMPUTE_SHARED_MEMORY_SIZE))#32kbrpi
+print("GL_MAX_COMPUTE_WORK_GROUP_SIZE", glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE,0))#256rpi
+print('GL_MAX_ARRAY_TEXTURE_LAYERS', glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS))
 
 
 
@@ -155,29 +160,91 @@ class SSBO:
 #uniform samplerBuffer myTBO;
 #float v = texelFetch(myTBO, index).r;
 
-npimg = np.arange(16*16).reshape(16,16).astype(np.float32)/256
-height,width = npimg.shape
 
-texture = glGenTextures(1)
-glBindTexture(GL_TEXTURE_2D, texture)
-
-glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0, GL_RED, GL_FLOAT, npimg)
-# glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGB, GL_FLOAT, npimg[::-1])
-
-glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)#GL_NEAREST GL_LINEAR GL_LINEAR_MIPMAP_LINEAR
-glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-# glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0)
-# glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0)
-# glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-# glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-
+# layout(binding=0) uniform sampler2DArray texArr;
+# vec4 c = texture(texArr, vec3(uv, layer_index));
+# layout(rgba8, binding=0) uniform readonly image2DArray img;
+# vec4 v = imageLoad(img, ivec3(x, y, layer_index));
 
 class Texture:
     "for image layer"
+    def __init__(self, npimg):
+        height,width = npimg.shape
+
+        texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, texture)
+        # glBindImageTexture #for compute
+
+        # glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0, GL_RED, GL_FLOAT, npimg)
+        # glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGB, GL_FLOAT, npimg[::-1])        
+        
+        #more static way..
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, width,height)
+        glTexSubImage2D(GL_TEXTURE_2D,
+                0,        # mip level
+                0, 0,   # xoffset, yoffset
+                width, height,     # update region size
+                GL_RED,
+                GL_FLOAT,
+                npimg)
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)#GL_NEAREST GL_LINEAR GL_LINEAR_MIPMAP_LINEAR
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0)
+        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0)
+        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        self.ID = texture
+
+    def bind(self):
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.ID)
+
+npimg = np.arange(8*8).reshape(8,8).astype(np.float32)/8**2
+tex = Texture(npimg)
 
 
 
+class TextureArray:
+    "for image layer"
+    def __init__(self, npimgs):
 
+        texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, texture)
+        
+        layer_count = len(npimgs)
+        height,width = npimgs[0].shape        
+        # print(bool(glTexStorage3D))
+        glTexStorage3D(GL_TEXTURE_2D_ARRAY,
+                       1,                 # mipmap levels
+                       GL_R32F,          # internal format
+                       width,
+                       height,
+                       layer_count)
+
+        for i, img in enumerate(npimgs):
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
+                            0, 0, 0, i,
+                            width, height, 1,
+                            GL_RED, GL_FLOAT,
+                            img)
+        
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        self.ID = texture
+    def bind(self):
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, self.ID)
+
+# npimg = np.arange(8*8).reshape(8,8).astype(np.float32)/8**2
+npimgs = [np.random.rand(8*8).reshape(8,8).astype(np.float32) for i in range(8)]
+tex_arr = TextureArray(npimgs)
+
+
+
+#compute
+#layout(r32f, binding = 0) uniform image2DArray img;
+#glBindImageTexture(0, texture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32F);#GL_TRUE는 layered→ array의 모든 레이어 접근 가능.
 
 
 #RPI4, GL_MAX_COMPUTE_WORK_GROUP_SIZE = 256
@@ -450,7 +517,33 @@ uniform sampler2D tex;
 
 void main(void){
     //color = vec4(uv_out,0, 1.0);
-    color = texture(tex, uv_out);    
+    //color = texture(tex, uv_out);
+    
+    ivec2 size = textureSize(tex, 0);
+    ivec2 coord = ivec2(uv_out * vec2(size));
+    color = texelFetch(tex, coord, 0);
+}
+"""
+frag_texA = """
+#version 310 es
+precision highp float;
+precision highp sampler2DArray;
+
+in vec2 uv_out;
+out vec4 color;
+
+//uniform sampler2D tex;
+uniform sampler2DArray texA;
+
+void main(void){
+    //color = vec4(uv_out,0, 1.0);
+    //color = texture(tex, uv_out);
+    
+    //ivec2 size = textureSize(tex, 0);
+    //ivec2 coord = ivec2(uv_out * vec2(size));
+    //color = texelFetch(tex, coord, 0);
+
+    color = texture(texA, vec3(uv_out, 0));
 }
 """
 
@@ -472,16 +565,17 @@ sha.set_uniform4x4("ProjectionView", projection_view)
 sha2 = DrawShader(vs=vert_tex,fs=frag_tex)
 sha2.set_uniform4x4("ProjectionView", projection_view)
 
+sha3 = DrawShader(vs=vert_tex,fs=frag_texA)
+sha3.set_uniform4x4("ProjectionView", projection_view)
+
 vao = VAO(pos_ssbo)
 
-vao_rect = VAO(SSBO(np.array([0,0,0.5, 1,0,0.5, 1,1,0.5,],dtype=np.float32)))
+vao_rect = VAO(SSBO(np.array([0,0,0.5, 1,0,0.5, 1,1,0.5,],dtype=np.float32) ))
 
 vao_idx_rect = VAOIndexed(
     SSBO(np.array([0,0,0, 1,0,0, 1,1,0, 0,1,0],dtype=np.float32)),
     SSBO(np.array([0,1,2, 0,2,3],dtype=np.uint32))
 )
-glActiveTexture(GL_TEXTURE0)
-glBindTexture(GL_TEXTURE_2D, texture)
 
 
 
@@ -499,9 +593,26 @@ def on_draw():
     vao.draw_point()
     
     sha2.use()
+    tex.bind()
     vao_rect.draw()
+    
+    sha3.use()
+    tex_arr.bind()
     vao_idx_rect.draw()
     # sha.draw(pos_ssbo.size//3, position=pos_ssbo)
+
+    #???? somehow shader strong bound with texture.. and uniforms.
+    # sha_texture.draw(tex,vao_rect)
+    # sha_texture_array.draw(tex_arr,vao_idx_rect)
+
+    #shader knows about what in - vao is.
+    #and texture is.
+    #sha.draw(vao,texture)??
+    
+    #view matrix shall be by UBO,
+    #what about instanced 4x4?
+    #what about pos? (and direction)
+
     
     time.sleep(0.01)
 
