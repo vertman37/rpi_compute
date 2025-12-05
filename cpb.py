@@ -51,7 +51,6 @@ if platform.system() == "Linux":
         def glGetProgramResourceIndex(program,target,name):
             name = bytes(name,encoding='utf-8')
             return _gl.glGetProgramResourceIndex(program,target,name)
-        
         #not supported in ES.
         # glShaderStorageBlockBinding
         
@@ -285,8 +284,34 @@ class VAO:
         # print(self.count,'count',size,ssbo.size)
     def draw(self):
         glBindVertexArray(self.vao)
+        glDrawArrays(GL_TRIANGLES, 0, self.count)
+    def draw_point(self):
+        glBindVertexArray(self.vao)
         glDrawArrays(GL_POINTS, 0, self.count)
-        # glDrawArrays(GL_TRIANGLES, 0, 6)
+
+class VAOIndexed:
+    "is for draw object. requires shader used first."
+    def __init__(self, ssbo, ssbo_index, size=3,stride=0):
+        self.vao = glGenVertexArrays(1)
+        glBindVertexArray(self.vao)
+
+        glBindBuffer(GL_ARRAY_BUFFER, ssbo.ID)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ssbo_index.ID)
+        
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, size, GL_FLOAT, GL_FALSE, stride, None)#index size type normalize stride offsetptr
+        # glEnableVertexAttribArray(1)
+        # glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * vertices.itemsize, ctypes.c_void_p(3 * vertices.itemsize))
+        #stride = 5 * vertices.itemsize
+        
+        self.count = ssbo_index.size
+        self.ma = ssbo_index
+    def draw(self):
+        glBindVertexArray(self.vao)
+        glDrawElements(GL_TRIANGLES, self.count, GL_UNSIGNED_INT,None)
+    def draw_point(self):
+        glBindVertexArray(self.vao)
+        glDrawElements(GL_POINTS, self.count, GL_UNSIGNED_INT,None)
 
 
 
@@ -354,6 +379,44 @@ void main(void){
 }
 """
 
+
+vert_tex = """
+#version 310 es
+precision highp float;
+
+uniform mat4 ProjectionView;
+
+layout(location = 0) in vec3 position;
+
+out vec2 uv_out;
+
+void main() {
+    gl_Position = ProjectionView * vec4(position, 1.0);
+    uv_out = position.xy;
+}
+"""
+frag_tex = """
+#version 310 es
+precision highp float;
+
+in vec2 uv_out;
+out vec4 color;
+
+uniform sampler2D tex;
+
+void main(void){
+    color = vec4(uv_out,0, 1.0);
+    //color = texture2D(tex, uv_out);
+}
+"""
+
+# layout(std140, binding = 0) uniform Camera {
+#     mat4 view;
+#     mat4 proj;
+# };
+# glBindBufferBase(GL_UNIFORM_BUFFER, 0, ubo_id)
+
+
 projection = matrix44.create_perspective_projection(45,16/9,0.01,100)#fov ratio near far
 view = matrix44.create_look_at([3,3,3], [0,0,0], [0,1,0]) # view target up
 projection_view = (projection.T@view.T).T #to pretty print(and gl-preffered), pyrr is col.major.
@@ -362,21 +425,34 @@ sha = DrawShader(vs=vert,fs=frag)
 sha.set_uniform4x4("ProjectionView", projection_view)
 # sha.set_in("position",3)
 
+sha2 = DrawShader(vs=vert_tex,fs=frag_tex)
+sha2.set_uniform4x4("ProjectionView", projection_view)
+
 vao = VAO(pos_ssbo)
 
+vao_rect = VAO(SSBO(np.array([0,0,0.5, 1,0,0.5, 1,1,0.5,],dtype=np.float32)))
+
+vao_idx_rect = VAOIndexed(
+    SSBO(np.array([0,0,0, 1,0,0, 1,1,0, 0,1,0],dtype=np.float32)),
+    SSBO(np.array([0,1,2, 0,2,3],dtype=np.uint32))
+)
 
 glPointSize(5)  #not working on rpi
 glClearColor(0.2,0.2,0.2,1)
-
+glEnable(GL_DEPTH_TEST)
 @window.event
 def on_draw():
     # window.clear()
-    glClear(GL_COLOR_BUFFER_BIT)
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
 
     sha_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
     
     sha.use()
-    vao.draw()
+    vao.draw_point()
+    
+    sha2.use()
+    vao_rect.draw()
+    vao_idx_rect.draw()
     # sha.draw(pos_ssbo.size//3, position=pos_ssbo)
     
     time.sleep(0.01)
