@@ -136,6 +136,50 @@ class SSBO:
         return read_data
 
 
+
+#texture uses 2d cache. Morton layout (Z-order curve)
+#NV 64bytes 8x8 2D tile | arm 16x16 or 32.
+
+
+#texture types for GLSL:
+# samplerBuffer for TBO
+# Image2D 2D layout, texture cache. imageLoad/imageStore
+# sampler2D ReadOnly. mipmap,filter,warp,normalized coords. great for 2D RO?
+
+# sampler2D / sampler2DArray / isampler2D usampler2D
+
+#to get data from texture-likes
+# fragColor = texture(tex, vec3(fs_uv,Index));
+# texelFetch gets data with int texel coords.
+
+#uniform samplerBuffer myTBO;
+#float v = texelFetch(myTBO, index).r;
+
+npimg = np.arange(16*16).reshape(16,16).astype(np.float32)/256
+height,width = npimg.shape
+
+texture = glGenTextures(1)
+glBindTexture(GL_TEXTURE_2D, texture)
+
+glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0, GL_RED, GL_FLOAT, npimg)
+# glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGB, GL_FLOAT, npimg[::-1])
+
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)#GL_NEAREST GL_LINEAR GL_LINEAR_MIPMAP_LINEAR
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+# glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0)
+# glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0)
+# glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+# glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+
+
+class Texture:
+    "for image layer"
+
+
+
+
+
+
 #RPI4, GL_MAX_COMPUTE_WORK_GROUP_SIZE = 256
 BLOCKSIZE = 256
 
@@ -405,8 +449,8 @@ out vec4 color;
 uniform sampler2D tex;
 
 void main(void){
-    color = vec4(uv_out,0, 1.0);
-    //color = texture2D(tex, uv_out);
+    //color = vec4(uv_out,0, 1.0);
+    color = texture(tex, uv_out);    
 }
 """
 
@@ -436,6 +480,10 @@ vao_idx_rect = VAOIndexed(
     SSBO(np.array([0,0,0, 1,0,0, 1,1,0, 0,1,0],dtype=np.float32)),
     SSBO(np.array([0,1,2, 0,2,3],dtype=np.uint32))
 )
+glActiveTexture(GL_TEXTURE0)
+glBindTexture(GL_TEXTURE_2D, texture)
+
+
 
 glPointSize(5)  #not working on rpi
 glClearColor(0.2,0.2,0.2,1)
