@@ -225,8 +225,7 @@ class TextureArray:
                             0, 0, 0, i,
                             width, height, 1,
                             GL_RED, GL_FLOAT,
-                            img)
-        
+                            img[::-1])
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         self.ID = texture
@@ -458,6 +457,7 @@ compute_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
 
 
 
+#==============================cnn operations
 
 
 
@@ -508,6 +508,7 @@ precision highp float;
 
 uniform mat4 ProjectionView;
 uniform vec3 Coords;
+uniform float AddSize;
 
 const vec3 rect[6] = vec3[6](
     vec3(0,0,0),
@@ -527,11 +528,12 @@ void main() {
     rect_idx = gl_VertexID / 6; // 0,0,0,0,0,0, 1,1,1,1,1,1,
     
     vec3 position = rect[pos_idx];
+    uv_out = position.xy;
+    
+    position *= (1+AddSize);
     position.z += -float(rect_idx)*0.5;
     position += Coords;
-
     gl_Position = ProjectionView * vec4(position, 1.0);
-    uv_out = position.xy;
 }
 """
 frag_tex = """
@@ -548,6 +550,13 @@ out vec4 color;
 //uniform sampler2D tex;
 uniform sampler2DArray texA;
 
+vec3 jet(float x) {
+    // x: 0.0 ~ 1.0
+    float r = clamp(1.5 - abs(4.0 * x - 3.0), 0.0, 1.0);
+    float g = clamp(1.5 - abs(4.0 * x - 2.0), 0.0, 1.0);
+    float b = clamp(1.5 - abs(4.0 * x - 1.0), 0.0, 1.0);
+    return vec3(r, g, b);
+}
 
 void main(void){
     //color = vec4(uv_out,0, 1.0);
@@ -558,6 +567,11 @@ void main(void){
     //color = texelFetch(tex, coord, 0);
 
     color = texture(texA, vec3(uv_out, rect_idx));
+    color.yz = color.xx;
+    //if (color.x<0.001){
+    //    color.a = 0.0;
+    //}
+    //color = vec4(jet(float(color.x)), 1.0);
 
     //texel requires uint indexing! not [0-1] of uv.
     //For simplicity, we draw using texture().
@@ -569,20 +583,81 @@ sha_rect = DrawShader(vs=vert_tex,fs=frag_tex)
 
 
 projection = matrix44.create_perspective_projection(45,16/9,0.01,100)#fov ratio near far
-view = matrix44.create_look_at([3,3,3], [0,0,0], [0,1,0]) # view target up
+view = matrix44.create_look_at([5,5,5], [0,0,0], [0,1,0]) # view target up
 projection_view = (projection.T@view.T).T #to pretty print(and gl-preffered), pyrr is col.major.
 
 sha_point.set_uniform4x4("ProjectionView", projection_view)
 sha_rect.set_uniform4x4("ProjectionView", projection_view)
 
 
+# Input channel (RGB, 3)
+# Output channel = feature map / filter count.
+# feature depth/feature dimension
+# kernel has depth, kernel tensor has shape = (32,1,3,3) , depth=32.
+
+class Conv2d:
+    def __init__(self, weight):
+        out_ch,in_ch,kh,kw = weight.shape
+        #(32, 1, 3, 3) for 3x3 input:1, output:32.
+        self.kw = kw
+        self.kh = kh
+        
+        self.in_ch = in_ch
+        self.out_ch = out_ch
+
+        #for convinience
+        self.size = kw
+        self.depth = out_ch
+
+        # for i in range(in_ch):
+        #keep the shape to 3d spartial layout.
+        self.tex_arrs = []
+        for kernels in weight:
+            npimgs = [k for k in kernels]
+            tex_arr = TextureArray(npimgs)
+            self.tex_arrs.append(tex_arr)
+
+        #we need output layers, too.
+
+
+
+
+
+data = np.load("params.npz")
+# for k in data.files:
+#     arr = data[k]
+#     print(k, arr.shape, arr.dtype)
+# conv1_weight (32, 1, 3, 3) float32
+# conv1_bias (32,) float32
+# conv2_weight (64, 32, 3, 3) float32
+# conv2_bias (64,) float32
+# fc1_weight (128, 3136) float32
+# fc1_bias (128,) float32
+# fc2_weight (10, 128) float32
+# fc2_bias (10,) float32
+
+conv1_weight = data['conv1_weight']
+# print(conv1_weight.shape)
+# print(conv1_weight)
+
+conv2d = Conv2d(conv1_weight)
+
+
+
+test_data = np.load("fmnist_test_normalized.npz")
+imgs = test_data["images"]        # (N,1,28,28)
+labels = test_data["labels"]
+# print(imgs.shape)#(10000, 1, 28, 28)
+
 
 # npimg = np.arange(8*8).reshape(8,8).astype(np.float32)/8**2
-XY = 16
+XY = 3
 npimgs = [np.random.rand(XY*XY).reshape(XY,XY).astype(np.float32) for i in range(8)]
 tex_arr = TextureArray(npimgs)
 
-npimgs = [np.random.rand(8*8).reshape(8,8).astype(np.float32) for i in range(4)]
+XY = 7
+npimgs = [np.random.rand(XY*XY).reshape(XY,XY).astype(np.float32) for i in range(4)]
+npimgs = [imgs[0].reshape(28,28)]
 tex_arr2 = TextureArray(npimgs)
 
 
@@ -597,8 +672,10 @@ vao_rect = glGenVertexArrays(1)
 
 
 glPointSize(5)  #not working on rpi
-glClearColor(0.2,0.2,0.2,1)
+glClearColor(0.0,0.2,0.2,1)
 glEnable(GL_DEPTH_TEST)
+glEnable(GL_BLEND)
+glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 @window.event
 def on_draw():
     # window.clear()
@@ -606,18 +683,27 @@ def on_draw():
 
     compute_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
     
-    sha_point.use()
-    glBindVertexArray(vao_point)
-    glDrawArrays(GL_POINTS, 0, N)
+    # sha_point.use()
+    # glBindVertexArray(vao_point)
+    # glDrawArrays(GL_POINTS, 0, N)
 
     sha_rect.use()
     glBindVertexArray(vao_rect)
+    sha_rect.set_uniform('AddSize',0)
     
-    sha_rect.set_uniform3('Coords',(0,0,1))
-    tex_arr.bind()
-    glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
+    # sha_rect.set_uniform3('Coords',(-2,0,1))
+    # tex_arr.bind()
+    # glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
+    
+    for i,tex_arr in enumerate(conv2d.tex_arrs):
+        # sha_rect.set_uniform3('Coords',(-2, -i, 0))
+        sha_rect.set_uniform3('Coords',(-2, 0, 2-i*0.5))
+        tex_arr.bind()        
+        glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
 
-    sha_rect.set_uniform3('Coords',(-2,0,1))
+
+    sha_rect.set_uniform3('Coords',(-7,0,0))
+    sha_rect.set_uniform('AddSize',2)
     tex_arr2.bind()
     glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr2.layer_count)#6=2 triangles.
 
