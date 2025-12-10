@@ -530,7 +530,7 @@ void main() {
     vec3 position = rect[pos_idx];
     uv_out = position.xy;
     
-    position *= (1+AddSize);
+    position *= (1.0+AddSize);//implicit convert error if 1+addsize.(not float)
     position.z += -float(rect_idx)*0.5;
     position += Coords;
     gl_Position = ProjectionView * vec4(position, 1.0);
@@ -594,9 +594,8 @@ sha_rect.set_uniform4x4("ProjectionView", projection_view)
 # Output channel = feature map / filter count.
 # feature depth/feature dimension
 # kernel has depth, kernel tensor has shape = (32,1,3,3) , depth=32.
-
 class Conv2d:
-    def __init__(self, weight):
+    def __init__(self, weight, outsize):
         out_ch,in_ch,kh,kw = weight.shape
         #(32, 1, 3, 3) for 3x3 input:1, output:32.
         self.kw = kw
@@ -605,9 +604,9 @@ class Conv2d:
         self.in_ch = in_ch
         self.out_ch = out_ch
 
-        #for convinience
-        self.size = kw
-        self.depth = out_ch
+        #for convinience, but confusing naming!
+        # self.size = kw
+        # self.depth = out_ch
 
         # for i in range(in_ch):
         #keep the shape to 3d spartial layout.
@@ -617,7 +616,16 @@ class Conv2d:
             tex_arr = TextureArray(npimgs)
             self.tex_arrs.append(tex_arr)
 
-        #we need output layers, too.
+        self.weight = weight
+        #we need output layers, too.-> not here! unknown to input.
+        self.tex_outputs = []
+
+        npimg = np.zeros((outsize,outsize),dtype=np.float32)
+        npimgs = [npimg for i in range(out_ch)]
+        for depth in range(in_ch):
+            tex_arr = TextureArray(npimgs)
+            self.tex_outputs.append(tex_arr)
+
 
 
 
@@ -640,12 +648,13 @@ conv1_weight = data['conv1_weight']
 # print(conv1_weight.shape)
 # print(conv1_weight)
 
-conv2d = Conv2d(conv1_weight)
+conv2d = Conv2d(conv1_weight, outsize=28)
 
 
 
 test_data = np.load("fmnist_test_normalized.npz")
 imgs = test_data["images"]        # (N,1,28,28)
+# imgs = (imgs+1)/2
 labels = test_data["labels"]
 # print(imgs.shape)#(10000, 1, 28, 28)
 
@@ -701,6 +710,12 @@ def on_draw():
         tex_arr.bind()        
         glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
 
+    sha_rect.set_uniform('AddSize',1)
+    for i,tex_arr in enumerate(conv2d.tex_outputs):
+        # sha_rect.set_uniform3('Coords',(-2, -i, 0))
+        sha_rect.set_uniform3('Coords',(1.5, 0, 2-i*0.5))
+        tex_arr.bind()
+        glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
 
     sha_rect.set_uniform3('Coords',(-7,0,0))
     sha_rect.set_uniform('AddSize',2)
