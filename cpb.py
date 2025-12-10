@@ -203,8 +203,6 @@ class Texture:
 npimg = np.arange(8*8).reshape(8,8).astype(np.float32)/8**2
 tex = Texture(npimg)
 
-
-
 class TextureArray:
     "for image layer"
     def __init__(self, npimgs):
@@ -232,13 +230,12 @@ class TextureArray:
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         self.ID = texture
+        self.layer_count = layer_count
+
     def bind(self):
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D_ARRAY, self.ID)
 
-# npimg = np.arange(8*8).reshape(8,8).astype(np.float32)/8**2
-npimgs = [np.random.rand(8*8).reshape(8,8).astype(np.float32) for i in range(8)]
-tex_arr = TextureArray(npimgs)
 
 
 
@@ -247,30 +244,6 @@ tex_arr = TextureArray(npimgs)
 #glBindImageTexture(0, texture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32F);#GL_TRUE는 layered→ array의 모든 레이어 접근 가능.
 
 
-#RPI4, GL_MAX_COMPUTE_WORK_GROUP_SIZE = 256
-BLOCKSIZE = 256
-
-compute_src_posspd ="""
-#version 310 es
-precision highp float;
-
-uniform float dt;
-
-layout(local_size_x = 256) in;
-
-layout(std430, binding=0) buffer Pos {
-    float pos[];
-};
-
-layout(std430, binding=1) buffer Spd {
-    float spd[];
-};
-
-void main() {
-    uint idx = gl_GlobalInvocationID.x;
-    pos[idx] += spd[idx] * dt;
-}
-"""
 
 
 class Shader:
@@ -299,7 +272,7 @@ class Shader:
             #we force to use binding=0,1,2.. so that found counter will matched.
             loc = idx
             #it gets binding=x to x. without binding, it returns 0.
-            # print(glGetProgramResourceiv(sha_posspd.program, GL_SHADER_STORAGE_BLOCK, 0, 1,[GL_BUFFER_BINDING], 1))
+            # print(glGetProgramResourceiv(compute_posspd.program, GL_SHADER_STORAGE_BLOCK, 0, 1,[GL_BUFFER_BINDING], 1))
             
             #finally found: with out binding, explicit setting is required.
             #but not supported in GL ES3.1.
@@ -321,10 +294,26 @@ class Shader:
         idx = self.get_loc_ssbo(name)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, idx, ssbo.ID)
 
-    def set_uniform1(self, name,value):
+    def set_uniform(self, name,value, vtype='f'):
         loc = self.get_loc_uniform(name)
         self.use()#for future, it will be removed. only for RPI,legacy.
-        glUniform1f(loc, value)  #set variable
+        if vtype == 'f':
+            glUniform1f(loc, value)  #set variable
+        elif vtype == 'i':
+            glUniform1i(loc, value)  #set variable
+        elif vtype == 'ui':
+            glUniform1ui(loc, value)  #set variable
+        # glProgramUniform1f / DSA
+
+    def set_uniform3(self, name,value, vtype='f'):
+        loc = self.get_loc_uniform(name)
+        self.use()#for future, it will be removed. only for RPI,legacy.
+        if vtype == 'f':
+            glUniform3fv(loc, 1,value)  #set variable
+        elif vtype == 'i':
+            glUniform3iv(loc, 1,value)  #set variable
+        elif vtype == 'ui':
+            glUniform3uiv(loc, 1,value)  #set variable
         # glProgramUniform1f / DSA
     
     def set_uniform4x4(self, name,value):
@@ -375,54 +364,65 @@ class DrawShader(Shader):
 
 
 
-class VAO:
-    "is for draw object. requires shader used first."
-    def __init__(self, ssbo, size=3,stride=0):
-        self.vao = glGenVertexArrays(1)
-        glBindVertexArray(self.vao)
 
-        glBindBuffer(GL_ARRAY_BUFFER, ssbo.ID)
-        glEnableVertexAttribArray(0)
-        glVertexAttribPointer(0, size, GL_FLOAT, GL_FALSE, stride, None)#index size type normalize stride offsetptr
-        # ctypes.c_void_p(3 * vertices.itemsize)#offset is local.
-        #stride = 5 * vertices.itemsize
-        
-        self.count = ssbo.size//size
-        # if stride == 0:
-            # self.count = ssbo.size//size
-        # else:
-        #     self.count = ssbo.size//stride
-        # print(self.count,'count',size,ssbo.size)
-    def draw(self):
-        glBindVertexArray(self.vao)
-        glDrawArrays(GL_TRIANGLES, 0, self.count)
-    def draw_point(self):
-        glBindVertexArray(self.vao)
-        glDrawArrays(GL_POINTS, 0, self.count)
 
-class VAOIndexed:
-    "is for draw object. requires shader used first."
-    def __init__(self, ssbo, ssbo_index, size=3,stride=0):
-        self.vao = glGenVertexArrays(1)
-        glBindVertexArray(self.vao)
 
-        glBindBuffer(GL_ARRAY_BUFFER, ssbo.ID)
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ssbo_index.ID)
-        
-        glEnableVertexAttribArray(0)
-        glVertexAttribPointer(0, size, GL_FLOAT, GL_FALSE, stride, None)#index size type normalize stride offsetptr
-        # glEnableVertexAttribArray(1)
-        # glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * vertices.itemsize, ctypes.c_void_p(3 * vertices.itemsize))
-        #stride = 5 * vertices.itemsize
-        
-        self.count = ssbo_index.size
-        self.ma = ssbo_index
-    def draw(self):
-        glBindVertexArray(self.vao)
-        glDrawElements(GL_TRIANGLES, self.count, GL_UNSIGNED_INT,None)
-    def draw_point(self):
-        glBindVertexArray(self.vao)
-        glDrawElements(GL_POINTS, self.count, GL_UNSIGNED_INT,None)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#======================================================
+#======================================================
+#======================================================
+#======================================================
+#===============FORGET THE CLASSES AVOBE===============
+#===============FORGET THE CLASSES AVOBE===============
+#===============FORGET THE CLASSES AVOBE===============
+#===============FORGET THE CLASSES AVOBE===============
+#======================================================
+#======================================================
+#======================================================
+#======================================================
+
+#RPI4, GL_MAX_COMPUTE_WORK_GROUP_SIZE = 256
+BLOCKSIZE = 256
+
+compute_src_posspd ="""
+#version 310 es
+precision highp float;
+
+uniform float dt;
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding=0) buffer Pos {
+    float pos[];
+};
+
+layout(std430, binding=1) buffer Spd {
+    float spd[];
+};
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    pos[idx] += spd[idx] * dt;
+}
+"""
+compute_posspd = ComputeShader(compute_src_posspd)
+compute_posspd.set_uniform("dt",0.1)
 
 
 
@@ -431,14 +431,11 @@ spd = np.ones(10, dtype=np.float32)
 pos_ssbo = SSBO(pos)
 spd_ssbo = SSBO(spd)
 
-sha_posspd = ComputeShader(compute_src_posspd)
-sha_posspd.set_uniform1("dt",0.1)
-
-# sha_posspd.bind_ssbo("Pos",pos_ssbo)
-# sha_posspd.bind_ssbo("Spd",spd_ssbo)
-# sha_posspd.dispatch(pos_ssbo.size)
+# compute_posspd.bind_ssbo("Pos",pos_ssbo)
+# compute_posspd.bind_ssbo("Spd",spd_ssbo)
+# compute_posspd.dispatch(pos_ssbo.size)
 # or in short,
-sha_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
+compute_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
 
 print(pos_ssbo.read())
 # exit()
@@ -451,7 +448,21 @@ spd = np.random.rand(N*3).astype(np.float32)-0.5
 pos_ssbo = SSBO(pos)
 spd_ssbo = SSBO(spd)
 
-sha_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
+compute_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 UBO_or_SSBO = """
@@ -467,7 +478,7 @@ layout(std140) uniform DataBuffer {
 """
 #NOTE: RPI4 not allows SSBO in vertex shader.
 
-vert = """
+vert_point = """
 #version 310 es
 precision highp float;
 
@@ -479,7 +490,7 @@ void main() {
     gl_Position = ProjectionView * vec4(position, 1.0);
 }
 """
-frag = """
+frag_point = """
 #version 310 es
 precision highp float;
 
@@ -496,12 +507,29 @@ vert_tex = """
 precision highp float;
 
 uniform mat4 ProjectionView;
+uniform vec3 Coords;
 
-layout(location = 0) in vec3 position;
+const vec3 rect[6] = vec3[6](
+    vec3(0,0,0),
+    vec3(1,0,0),
+    vec3(1,1,0),
+    
+    vec3(0,0,0),
+    vec3(1,1,0),
+    vec3(0,1,0)
+);
 
 out vec2 uv_out;
+out flat int rect_idx;
 
 void main() {
+    int pos_idx = gl_VertexID % 6; // 0,1,2,3,4,5, 0,1,2,3,4,5,
+    rect_idx = gl_VertexID / 6; // 0,0,0,0,0,0, 1,1,1,1,1,1,
+    
+    vec3 position = rect[pos_idx];
+    position.z += -float(rect_idx)*0.5;
+    position += Coords;
+
     gl_Position = ProjectionView * vec4(position, 1.0);
     uv_out = position.xy;
 }
@@ -509,31 +537,17 @@ void main() {
 frag_tex = """
 #version 310 es
 precision highp float;
-
-in vec2 uv_out;
-out vec4 color;
-
-uniform sampler2D tex;
-
-void main(void){
-    //color = vec4(uv_out,0, 1.0);
-    //color = texture(tex, uv_out);
-    
-    ivec2 size = textureSize(tex, 0);
-    ivec2 coord = ivec2(uv_out * vec2(size));
-    color = texelFetch(tex, coord, 0);
-}
-"""
-frag_texA = """
-#version 310 es
-precision highp float;
 precision highp sampler2DArray;
 
+
+flat in int rect_idx;
 in vec2 uv_out;
 out vec4 color;
 
+//uniform uint tidx;
 //uniform sampler2D tex;
 uniform sampler2DArray texA;
+
 
 void main(void){
     //color = vec4(uv_out,0, 1.0);
@@ -543,40 +557,43 @@ void main(void){
     //ivec2 coord = ivec2(uv_out * vec2(size));
     //color = texelFetch(tex, coord, 0);
 
-    color = texture(texA, vec3(uv_out, 0));
+    color = texture(texA, vec3(uv_out, rect_idx));
+
+    //texel requires uint indexing! not [0-1] of uv.
+    //For simplicity, we draw using texture().
+    //color = texelFetch(texA, ivec3(uv_out, rect_idx), 0);
 }
 """
-
-# layout(std140, binding = 0) uniform Camera {
-#     mat4 view;
-#     mat4 proj;
-# };
-# glBindBufferBase(GL_UNIFORM_BUFFER, 0, ubo_id)
+sha_point = DrawShader(vs=vert_point,fs=frag_point)
+sha_rect = DrawShader(vs=vert_tex,fs=frag_tex)
 
 
 projection = matrix44.create_perspective_projection(45,16/9,0.01,100)#fov ratio near far
 view = matrix44.create_look_at([3,3,3], [0,0,0], [0,1,0]) # view target up
 projection_view = (projection.T@view.T).T #to pretty print(and gl-preffered), pyrr is col.major.
 
-sha = DrawShader(vs=vert,fs=frag)
-sha.set_uniform4x4("ProjectionView", projection_view)
-# sha.set_in("position",3)
+sha_point.set_uniform4x4("ProjectionView", projection_view)
+sha_rect.set_uniform4x4("ProjectionView", projection_view)
 
-sha2 = DrawShader(vs=vert_tex,fs=frag_tex)
-sha2.set_uniform4x4("ProjectionView", projection_view)
 
-sha3 = DrawShader(vs=vert_tex,fs=frag_texA)
-sha3.set_uniform4x4("ProjectionView", projection_view)
 
-vao = VAO(pos_ssbo)
+# npimg = np.arange(8*8).reshape(8,8).astype(np.float32)/8**2
+XY = 16
+npimgs = [np.random.rand(XY*XY).reshape(XY,XY).astype(np.float32) for i in range(8)]
+tex_arr = TextureArray(npimgs)
 
-vao_rect = VAO(SSBO(np.array([0,0,0.5, 1,0,0.5, 1,1,0.5,],dtype=np.float32) ))
+npimgs = [np.random.rand(8*8).reshape(8,8).astype(np.float32) for i in range(4)]
+tex_arr2 = TextureArray(npimgs)
 
-vao_idx_rect = VAOIndexed(
-    SSBO(np.array([0,0,0, 1,0,0, 1,1,0, 0,1,0],dtype=np.float32)),
-    SSBO(np.array([0,1,2, 0,2,3],dtype=np.uint32))
-)
 
+
+vao_point = glGenVertexArrays(1)
+glBindVertexArray(vao_point)
+glBindBuffer(GL_ARRAY_BUFFER, pos_ssbo.ID)
+glEnableVertexAttribArray(0)
+glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)#index size type normalize stride offsetptr
+
+vao_rect = glGenVertexArrays(1)
 
 
 glPointSize(5)  #not working on rpi
@@ -587,33 +604,23 @@ def on_draw():
     # window.clear()
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
 
-    sha_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
+    compute_posspd.execute(pos_ssbo.size, Pos=pos_ssbo,Spd=spd_ssbo)
     
-    sha.use()
-    vao.draw_point()
+    sha_point.use()
+    glBindVertexArray(vao_point)
+    glDrawArrays(GL_POINTS, 0, N)
+
+    sha_rect.use()
+    glBindVertexArray(vao_rect)
     
-    sha2.use()
-    tex.bind()
-    vao_rect.draw()
-    
-    sha3.use()
+    sha_rect.set_uniform3('Coords',(0,0,1))
     tex_arr.bind()
-    vao_idx_rect.draw()
-    # sha.draw(pos_ssbo.size//3, position=pos_ssbo)
+    glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
 
-    #???? somehow shader strong bound with texture.. and uniforms.
-    # sha_texture.draw(tex,vao_rect)
-    # sha_texture_array.draw(tex_arr,vao_idx_rect)
+    sha_rect.set_uniform3('Coords',(-2,0,1))
+    tex_arr2.bind()
+    glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr2.layer_count)#6=2 triangles.
 
-    #shader knows about what in - vao is.
-    #and texture is.
-    #sha.draw(vao,texture)??
-    
-    #view matrix shall be by UBO,
-    #what about instanced 4x4?
-    #what about pos? (and direction)
-
-    
     time.sleep(0.01)
 
 pyglet.app.run()
