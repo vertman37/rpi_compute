@@ -36,6 +36,7 @@ if platform.system() == "Linux":
         #it works!
         glTexStorage2D = _gl.glTexStorage2D
         glTexStorage3D = _gl.glTexStorage3D
+        glBindImageTexture = _gl.glBindImageTexture
         
         
         # glGetUniformLocation = _gl.glGetUniformLocation
@@ -89,6 +90,7 @@ window = pyglet.window.Window(config=config)
 #check the GL functions
 #glPointSize not working in rpi
 print('glDispatchCompute',bool(glDispatchCompute))
+print('glBindImageTexture',bool(glBindImageTexture))
 print('glProgramUniformMatrix4fv',bool(glProgramUniformMatrix4fv))
 print("GL_MAX_COMPUTE_SHARED_MEMORY_SIZE", glGetIntegerv(GL_MAX_COMPUTE_SHARED_MEMORY_SIZE))#32kbrpi
 print("GL_MAX_COMPUTE_WORK_GROUP_SIZE", glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE,0))#256rpi
@@ -230,11 +232,14 @@ class TextureArray:
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         self.ID = texture
         self.layer_count = layer_count
+        # self.format = GL_R32F
 
     def bind(self):
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D_ARRAY, self.ID)
-
+    def bind_compute(self):
+        glBindImageTexture(0, self.ID, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32F)
+        #GL_TRUE for layered→ array all layers..?
 
 
 
@@ -590,6 +595,10 @@ sha_point.set_uniform4x4("ProjectionView", projection_view)
 sha_rect.set_uniform4x4("ProjectionView", projection_view)
 
 
+
+
+
+
 # Input channel (RGB, 3)
 # Output channel = feature map / filter count.
 # feature depth/feature dimension
@@ -627,6 +636,28 @@ class Conv2d:
             self.tex_outputs.append(tex_arr)
 
 
+compute_src_conv2d ="""
+#version 310 es
+precision highp float;
+precision highp sampler2DArray;
+precision highp image2DArray;
+
+uniform float dt;
+
+layout(local_size_x = 16, local_size_y = 16) in;
+//layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(r32f, binding = 0) uniform writeonly image2DArray img;
+
+void main() {
+    ivec3 coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
+    float val = float(gl_GlobalInvocationID.x)/32.0 + float(gl_GlobalInvocationID.y)/32.0;
+    imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
+}
+"""
+compute_conv2d = ComputeShader(compute_src_conv2d)
+# compute_conv2d.set_uniform("dt",0.1)
+
 
 
 
@@ -650,7 +681,8 @@ conv1_weight = data['conv1_weight']
 
 conv2d = Conv2d(conv1_weight, outsize=28)
 
-
+conv2d.tex_outputs[0].bind_compute()
+compute_conv2d.dispatch(1)
 
 test_data = np.load("fmnist_test_normalized.npz")
 imgs = test_data["images"]        # (N,1,28,28)
@@ -668,6 +700,7 @@ XY = 7
 npimgs = [np.random.rand(XY*XY).reshape(XY,XY).astype(np.float32) for i in range(4)]
 npimgs = [imgs[0].reshape(28,28)]
 tex_arr2 = TextureArray(npimgs)
+
 
 
 
