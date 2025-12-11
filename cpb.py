@@ -228,6 +228,7 @@ class TextureArray:
                             width, height, 1,
                             GL_RED, GL_FLOAT,
                             img[::-1])
+        #float keeps the range, as it is. GL_R8/GL_R8_SNORM(int) ->normalized, if wanted.
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         self.ID = texture
@@ -665,11 +666,18 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(r32f, binding = 0) uniform writeonly image2DArray img;
 layout(r32f, binding = 1) uniform readonly image2DArray kernels;
+layout(r32f, binding = 2) uniform readonly image2DArray in_img;
 
 void main() {
     //early discard if coords..
-    ivec3 coord = ivec3(gl_GlobalInvocationID.xy, gl_GlobalInvocationID.z); // layer=0
-    float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
+    ivec3 coord = ivec3(gl_GlobalInvocationID.xyz); // layer=0
+    
+    //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
+    
+    //ivec3 size = imageSize(in_img);
+    ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
+    float val = imageLoad(in_img, in_coord).r;
+    
     imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
 """
@@ -699,9 +707,6 @@ conv1_weight = data['conv1_weight']
 
 conv2d = Conv2d(conv1_weight, outsize=28)
 
-conv2d.tex_outputs[0].bind_compute(0)
-conv2d.tex_kernels[0].bind_compute(1)
-compute_conv2d.dispatch(2,2,4)
 
 
 test_data = np.load("fmnist_test_normalized.npz")
@@ -722,6 +727,10 @@ npimgs = [imgs[0].reshape(28,28)]
 tex_arr2 = TextureArray(npimgs)
 
 
+conv2d.tex_outputs[0].bind_compute(0)
+conv2d.tex_kernels[0].bind_compute(1)
+tex_arr2.bind_compute(2)
+compute_conv2d.dispatch(2,2,4)
 
 
 vao_point = glGenVertexArrays(1)
