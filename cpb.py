@@ -623,13 +623,17 @@ class Conv2d:
         # self.size = kw
         # self.depth = out_ch
 
-        # for i in range(in_ch):
-        #keep the shape to 3d spartial layout.
         self.tex_kernels = []
+        #keep the shape to 3d spartial layout.
         # for kernels in weight:
+            # npimgs = [k for k in kernels]        
+        
         #break the spartial layout!        
-        for i in range(in_ch):
-            npimgs = [k for k in weight[:,i]]
+        # for i in range(in_ch):
+            # npimgs = [k for k in weight[:,i]]        
+        
+        for kernels in weight:
+            npimgs = [k for k in kernels]
             tex_arr = TextureArray(npimgs)
             self.tex_kernels.append(tex_arr)
 
@@ -668,29 +672,44 @@ layout(r32f, binding = 0) uniform writeonly image2DArray img;
 layout(r32f, binding = 1) uniform readonly image2DArray kernels;
 layout(r32f, binding = 2) uniform readonly image2DArray in_img;
 
+shared float kernel[9];
+
 void main() {
-    //early discard if coords..
-    ivec3 coord = ivec3(gl_GlobalInvocationID.xyz); // layer=0
+    int in_ch = int(gl_WorkGroupID.z);
     
-    //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
-    
-    ivec3 size = imageSize(kernels);//3,3,32 , if so.
-    float val = float(size.z)/32/2; //it was a good trick to see! make the value 1.0->0.5(gray)    
-    for (int i=0; i<10; i++) {
-        coord.z = i;
-        imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
+    //local group shares shared.
+    int lid = int(gl_LocalInvocationIndex);
+    if (lid < 9) {
+        int kx = int(lid % 3);
+        int ky = int(lid / 3);
+        kernel[lid] = imageLoad(kernels, ivec3(kx, ky, in_ch)).r;        
     }
+    barrier();
+
+    ivec3 coord = ivec3(gl_GlobalInvocationID.xyz);
 
     //ivec3 size = imageSize(in_img);
-    //ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
-    //float val = imageLoad(in_img, in_coord).r;
-    //imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
+    ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, in_ch); // layer=in_ch
+    float val = imageLoad(in_img, in_coord).r;
+    imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
 """
 compute_conv2d = ComputeShader(compute_src_conv2d)
 # compute_conv2d.set_uniform("dt",0.1)
 
+    # //early discard if coords..
+    # ivec3 coord = ivec3(gl_GlobalInvocationID.xyz); // layer=0
+    
+    # //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
+    
+    # float kval = imageLoad(kernels, coords).r;
 
+    # ivec3 size = imageSize(kernels);//3,3,32 , if so.
+    # float val = float(size.z)/32/2; //it was a good trick to see! make the value 1.0->0.5(gray)    
+    # for (int i=0; i<10; i++) {
+    #     coord.z = i;
+    #     imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
+    # }
 
 
 
@@ -734,9 +753,12 @@ tex_arr2 = TextureArray(npimgs)
 
 
 conv2d.tex_outputs[0].bind_compute(0)
-conv2d.tex_kernels[0].bind_compute(1)
+# conv2d.tex_kernels[0].bind_compute(1)
 tex_arr2.bind_compute(2)
-compute_conv2d.dispatch(2,2,1)
+
+for tex_kernel in conv2d.tex_kernels:
+    tex_kernel.bind_compute(1)
+    compute_conv2d.dispatch(2,2,1)
 
 
 vao_point = glGenVertexArrays(1)
@@ -776,7 +798,7 @@ def on_draw():
         # sha_rect.set_uniform3('Coords',(-2, -i, 0))
         sha_rect.set_uniform3('Coords',(-2, 0, 2-i*0.5))
         tex_arr.bind()        
-        glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
+        glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.        
     
     sha_rect.set_uniform('AddSize',1)
     for i,tex_arr in enumerate(conv2d.tex_outputs):
