@@ -674,11 +674,17 @@ void main() {
     
     //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
     
+    ivec3 size = imageSize(kernels);//3,3,32 , if so.
+    float val = float(size.z)/32/2; //it was a good trick to see! make the value 1.0->0.5(gray)    
+    for (int i=0; i<10; i++) {
+        coord.z = i;
+        imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
+    }
+
     //ivec3 size = imageSize(in_img);
-    ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
-    float val = imageLoad(in_img, in_coord).r;
-    
-    imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
+    //ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
+    //float val = imageLoad(in_img, in_coord).r;
+    //imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
 """
 compute_conv2d = ComputeShader(compute_src_conv2d)
@@ -730,7 +736,7 @@ tex_arr2 = TextureArray(npimgs)
 conv2d.tex_outputs[0].bind_compute(0)
 conv2d.tex_kernels[0].bind_compute(1)
 tex_arr2.bind_compute(2)
-compute_conv2d.dispatch(2,2,4)
+compute_conv2d.dispatch(2,2,1)
 
 
 vao_point = glGenVertexArrays(1)
