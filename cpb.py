@@ -544,7 +544,7 @@ void main() {
     uv_out = position.xy;
     
     position *= (1.0+AddSize);//implicit convert error if 1+addsize.(not float)
-    position.z += -float(rect_idx)*0.5;
+    position.z += -float(rect_idx)*0.95;
     position += Coords;
     gl_Position = ProjectionView * vec4(position, 1.0);
 }
@@ -670,6 +670,7 @@ precision highp sampler2DArray;
 precision highp image2DArray;
 
 uniform float dt;
+uniform int Index;
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -686,15 +687,16 @@ shared float kernel[9];
 void main() {
     //we have long kernels 1D ssbo
     //and dispatched z = out_channels.
+    int out_ch = int(gl_WorkGroupID.z);//0,1,2..
 
     int lid = int(gl_LocalInvocationIndex);
     if (lid < 9) {
-        kernel[lid] = kernels[lid];
+        //kernel[lid] = kernels[lid+ 9*(out_ch+1)];
+        kernel[lid] = kernels[lid+9*Index];
     }
 
     
     //==========conv==================
-    int out_ch = int(gl_WorkGroupID.z);
     
     ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
     ivec2 imgSize = ivec2(imageSize(in_img));
@@ -720,10 +722,10 @@ void main() {
             idx++;
         }
     }
-    imageStore(img, ivec3(gid,0), vec4(sum));
+    imageStore(img, ivec3(gid,0), vec4(sum));//sum can be any range.
+    //imageStore(img, ivec3(gid,out_ch), vec4(sum));//sum can be any range.
+    //imageStore(img, ivec3(out_ch,0,0), vec4(1.0));//good for debug
     //==========conv==================
-
-
 
     //early discard if coords..    
     //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
@@ -781,6 +783,10 @@ npimgs = [np.random.rand(XY*XY).reshape(XY,XY).astype(np.float32) for i in range
 npimgs = [imgs[0].reshape(28,28)]
 tex_arr2 = TextureArray(npimgs)
 
+tex_arr_input = []
+for i in range(100):
+    npimgs = [imgs[i].reshape(28,28)]
+    tex_arr_input.append(TextureArray(npimgs))
 
 conv2d.tex_outputs[0].bind_compute(0)
 # conv2d.tex_kernels[0].bind_compute(1)
@@ -789,6 +795,12 @@ tex_arr2.bind_compute(2)
 for ssbo_kernel in conv2d.ssbo_kernels:
     ssbo_kernel.bind(1)
     compute_conv2d.dispatch(2,2,conv2d.out_ch)
+#still has artifacts!
+# glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)
+# glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
+#even finish.. we need double buffer to draw(read) and write.
+glFinish()
+
 
 
 vao_point = glGenVertexArrays(1)
@@ -798,6 +810,25 @@ glEnableVertexAttribArray(0)
 glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)#index size type normalize stride offsetptr
 
 vao_rect = glGenVertexArrays(1)
+
+in_and_out=[0,0,0]
+from pyglet.window import key
+@window.event
+def on_key_press(symbol, modifiers):
+    if symbol == key.UP:
+        print("UP pressed")
+        in_and_out[0] +=1
+        in_and_out[2] = 0
+    if symbol == key.DOWN:
+        print("DOWN pressed")
+        in_and_out[0] -=1
+        in_and_out[2] = 0
+    if symbol == key.RIGHT:        
+        in_and_out[1] +=1
+        in_and_out[2] = 0
+    if symbol == key.LEFT:        
+        in_and_out[1] -=1
+        in_and_out[2] = 0
 
 
 glPointSize(5)  #not working on rpi
@@ -823,6 +854,20 @@ def on_draw():
     # sha_rect.set_uniform3('Coords',(-2,0,1))
     # tex_arr.bind()
     # glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
+    # if in_and_out[2]<1:
+    #     in_and_out[2]+=1
+    conv2d.tex_outputs[0].bind_compute(0)
+    # conv2d.tex_kernels[0].bind_compute(1)
+    # tex_arr2.bind_compute(2)
+
+    tex_arr_input[in_and_out[0]].bind_compute(2)
+    #use ssbo for kernel,instead!
+    for ssbo_kernel in conv2d.ssbo_kernels:
+        ssbo_kernel.bind(1)
+        compute_conv2d.set_uniform("Index",in_and_out[1],'i')
+        compute_conv2d.dispatch(2,2,conv2d.out_ch)
+
+
     
     #out channel 32, so it iters 32.
     for i,tex_arr in enumerate(conv2d.tex_kernels):
@@ -840,7 +885,8 @@ def on_draw():
         
     sha_rect.set_uniform3('Coords',(-7,0,0))
     sha_rect.set_uniform('AddSize',2)
-    tex_arr2.bind()
+    # tex_arr2.bind()
+    tex_arr_input[in_and_out[0]].bind()
     glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr2.layer_count)#6=2 triangles.
 
     time.sleep(0.01)
