@@ -692,16 +692,48 @@ void main() {
         kernel[lid] = kernels[lid];
     }
 
-    //early discard if coords..
-    ivec3 coord = ivec3(gl_GlobalInvocationID.xyz); // layer=0
     
-    //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
+    //==========conv==================
+    int out_ch = int(gl_WorkGroupID.z);
+    
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imgSize = ivec2(imageSize(in_img));
+    
+    //(VALID padding)
+    if (gid.x <= 0 || gid.y <= 0 ||
+        gid.x >= imgSize.x - 1 ||
+        gid.y >= imgSize.y - 1) {
+        return;
+    }
+    
+    float sum = 0.0;
 
+    // 3×3 neighbor offsets
+    // (-1,-1) ... (+1,+1)
+    int idx = 0;
+    for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+            ivec2 coord = gid + ivec2(i, j);
+            float pix = imageLoad(in_img, ivec3(coord, 0)).r;
+
+            sum += pix * kernel[idx];
+            idx++;
+        }
+    }
+    imageStore(img, ivec3(gid,0), vec4(sum));
+    //==========conv==================
+
+
+
+    //early discard if coords..    
+    //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
     //ivec3 size = imageSize(in_img);
     //ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
     //float val = imageLoad(in_img, in_coord).r;
-    float val = kernel[lid];
-    imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
+    
+    //float val = kernel[lid];
+    //ivec3 out_coord = ivec3(gl_GlobalInvocationID.xyz); // layer=0
+    //imageStore(img, out_coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
 """
 compute_conv2d = ComputeShader(compute_src_conv2d)
