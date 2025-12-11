@@ -141,6 +141,8 @@ class SSBO:
         # read_data = np.frombuffer(float_array, dtype=np.float32)
         read_data = np.ctypeslib.as_array(ctypes.cast(ptr, ctypes.POINTER(ctypes.c_float)), shape=(rdata.size,))
         return read_data
+    def bind(self,idx):
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, idx, self.ID)
 
 
 
@@ -298,7 +300,7 @@ class Shader:
 
     def bind_ssbo(self, name, ssbo):
         idx = self.get_loc_ssbo(name)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, idx, ssbo.ID)
+        ssbo.bind(idx)        
 
     def set_uniform(self, name,value, vtype='f'):
         loc = self.get_loc_uniform(name)
@@ -624,19 +626,22 @@ class Conv2d:
         # self.depth = out_ch
 
         self.tex_kernels = []
-        #keep the shape to 3d spartial layout.
-        # for kernels in weight:
-            # npimgs = [k for k in kernels]        
-        
-        #break the spartial layout!        
-        # for i in range(in_ch):
-            # npimgs = [k for k in weight[:,i]]        
-        
-        for kernels in weight:
-            npimgs = [k for k in kernels]
+        self.ssbo_kernels = []
+        for i in range(in_ch):#break the spartial layout!
+            npimgs = [k for k in weight[:,i]]
+            ssbo = SSBO(weight[:,i])
+            
+        # for kernels in weight:#keep the shape to 3d spartial layout.
+        #     npimgs = [k for k in kernels]
+        #     ssbo = SSBO(kernels)            
             tex_arr = TextureArray(npimgs)
+            print(tex_arr.layer_count,'layers')
+            print(ssbo.size,'ssbo size')
             self.tex_kernels.append(tex_arr)
+            self.ssbo_kernels.append(ssbo)
 
+
+        
         self.weight = weight
         #we need output layers, too.-> not here! unknown to input.
         #those will be traced by the class mimicing nn.Modules..
@@ -669,47 +674,40 @@ uniform float dt;
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(r32f, binding = 0) uniform writeonly image2DArray img;
-layout(r32f, binding = 1) uniform readonly image2DArray kernels;
+//layout(r32f, binding = 1) uniform readonly image2DArray kernels;
 layout(r32f, binding = 2) uniform readonly image2DArray in_img;
+
+layout(std430, binding = 1) readonly buffer Kernels {
+    float kernels[];
+};
 
 shared float kernel[9];
 
 void main() {
-    int in_ch = int(gl_WorkGroupID.z);
-    
-    //local group shares shared.
+    //we have long kernels 1D ssbo
+    //and dispatched z = out_channels.
+
     int lid = int(gl_LocalInvocationIndex);
     if (lid < 9) {
-        int kx = int(lid % 3);
-        int ky = int(lid / 3);
-        kernel[lid] = imageLoad(kernels, ivec3(kx, ky, in_ch)).r;        
+        kernel[lid] = kernels[lid];
     }
-    barrier();
 
-    ivec3 coord = ivec3(gl_GlobalInvocationID.xyz);
+    //early discard if coords..
+    ivec3 coord = ivec3(gl_GlobalInvocationID.xyz); // layer=0
+    
+    //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
 
     //ivec3 size = imageSize(in_img);
-    ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, in_ch); // layer=in_ch
-    float val = imageLoad(in_img, in_coord).r;
+    //ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
+    //float val = imageLoad(in_img, in_coord).r;
+    float val = kernel[lid];
     imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
 """
 compute_conv2d = ComputeShader(compute_src_conv2d)
 # compute_conv2d.set_uniform("dt",0.1)
 
-    # //early discard if coords..
-    # ivec3 coord = ivec3(gl_GlobalInvocationID.xyz); // layer=0
-    
-    # //float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
-    
-    # float kval = imageLoad(kernels, coords).r;
 
-    # ivec3 size = imageSize(kernels);//3,3,32 , if so.
-    # float val = float(size.z)/32/2; //it was a good trick to see! make the value 1.0->0.5(gray)    
-    # for (int i=0; i<10; i++) {
-    #     coord.z = i;
-    #     imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
-    # }
 
 
 
@@ -755,10 +753,10 @@ tex_arr2 = TextureArray(npimgs)
 conv2d.tex_outputs[0].bind_compute(0)
 # conv2d.tex_kernels[0].bind_compute(1)
 tex_arr2.bind_compute(2)
-
-for tex_kernel in conv2d.tex_kernels:
-    tex_kernel.bind_compute(1)
-    compute_conv2d.dispatch(2,2,1)
+#use ssbo for kernel,instead!
+for ssbo_kernel in conv2d.ssbo_kernels:
+    ssbo_kernel.bind(1)
+    compute_conv2d.dispatch(2,2,conv2d.out_ch)
 
 
 vao_point = glGenVertexArrays(1)
@@ -794,11 +792,12 @@ def on_draw():
     # tex_arr.bind()
     # glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
     
+    #out channel 32, so it iters 32.
     for i,tex_arr in enumerate(conv2d.tex_kernels):
         # sha_rect.set_uniform3('Coords',(-2, -i, 0))
         sha_rect.set_uniform3('Coords',(-2, 0, 2-i*0.5))
-        tex_arr.bind()        
-        glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.        
+        tex_arr.bind()
+        glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
     
     sha_rect.set_uniform('AddSize',1)
     for i,tex_arr in enumerate(conv2d.tex_outputs):
