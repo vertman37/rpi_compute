@@ -645,10 +645,10 @@ class Conv2d:
 
 
 # gl_WorkGroupID dispatch group coords
+# gl_NumWorkGroups dispatch dispatch sizes
 # gl_LocalInvocationID local sized
 # gl_GlobalInvocationID global sized
 # gl_WorkGroupSize local sizes
-# gl_NumWorkGroups dispatch dispatch sizes
 # gl_LocalInvocationIndex flatten! easy to access ssbo.
 compute_src_conv2d ="""
 #version 310 es
@@ -663,8 +663,8 @@ layout(local_size_x = 16, local_size_y = 16) in;
 layout(r32f, binding = 0) uniform writeonly image2DArray img;
 
 void main() {
-
-    ivec3 coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
+    //early discard if coords..
+    ivec3 coord = ivec3(gl_GlobalInvocationID.xy, gl_WorkGroupID.z); // layer=0
     float val = float(gl_LocalInvocationID.x)/32.0 + float(gl_LocalInvocationID.y)/32.0;
     imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
@@ -696,7 +696,7 @@ conv1_weight = data['conv1_weight']
 conv2d = Conv2d(conv1_weight, outsize=28)
 
 conv2d.tex_outputs[0].bind_compute()
-compute_conv2d.dispatch(2,2,1)
+compute_conv2d.dispatch(2,2,4)
 
 test_data = np.load("fmnist_test_normalized.npz")
 imgs = test_data["images"]        # (N,1,28,28)
