@@ -333,11 +333,15 @@ class ComputeShader(Shader):
         super().__init__()
         self.program = compileProgram(compileShader(inspect.cleandoc(compute_src), GL_COMPUTE_SHADER))        
 
-    def dispatch(self,N):
+    def dispatch(self,X,Y=1,Z=1):
         # "make sure to use()!"
         self.use()#made it sure.
-        dispatch_size = math.ceil(N/BLOCKSIZE)
-        glDispatchCompute(dispatch_size,1,1)
+        if Y==Z==1:
+            N = X
+            dispatch_size = math.ceil(N/BLOCKSIZE)
+            glDispatchCompute(dispatch_size,1,1)
+        else:
+            glDispatchCompute(X,Y,Z)
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)  # sync for SSBO
 
     def execute(self, N, **kwargs):
@@ -627,6 +631,10 @@ class Conv2d:
 
         self.weight = weight
         #we need output layers, too.-> not here! unknown to input.
+        #those will be traced by the class mimicing nn.Modules..
+        #..that traces the graph.
+        #when x,input given, layer's output will be deterministic during runtime.
+        #but keep those lines here, to keep the complexity.
         self.tex_outputs = []
 
         npimg = np.zeros((outsize,outsize),dtype=np.float32)
@@ -636,6 +644,12 @@ class Conv2d:
             self.tex_outputs.append(tex_arr)
 
 
+# gl_WorkGroupID dispatch group coords
+# gl_LocalInvocationID local sized
+# gl_GlobalInvocationID global sized
+# gl_WorkGroupSize local sizes
+# gl_NumWorkGroups dispatch dispatch sizes
+# gl_LocalInvocationIndex flatten! easy to access ssbo.
 compute_src_conv2d ="""
 #version 310 es
 precision highp float;
@@ -645,13 +659,13 @@ precision highp image2DArray;
 uniform float dt;
 
 layout(local_size_x = 16, local_size_y = 16) in;
-//layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(r32f, binding = 0) uniform writeonly image2DArray img;
 
 void main() {
+
     ivec3 coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
-    float val = float(gl_GlobalInvocationID.x)/32.0 + float(gl_GlobalInvocationID.y)/32.0;
+    float val = float(gl_LocalInvocationID.x)/32.0 + float(gl_LocalInvocationID.y)/32.0;
     imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
 """
@@ -682,7 +696,7 @@ conv1_weight = data['conv1_weight']
 conv2d = Conv2d(conv1_weight, outsize=28)
 
 conv2d.tex_outputs[0].bind_compute()
-compute_conv2d.dispatch(1)
+compute_conv2d.dispatch(2,2,1)
 
 test_data = np.load("fmnist_test_normalized.npz")
 imgs = test_data["images"]        # (N,1,28,28)
