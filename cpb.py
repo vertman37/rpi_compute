@@ -627,19 +627,18 @@ class Conv2d:
 
         self.tex_kernels = []
         self.ssbo_kernels = []
-        # for i in range(in_ch):
-        #break the spartial layout!        
-        for i in range(in_ch):
-            # npimgs = [k for k in kernels]
+        for i in range(in_ch):#break the spartial layout!
             npimgs = [k for k in weight[:,i]]
-            tex_arr = TextureArray(npimgs)
-            self.tex_kernels.append(tex_arr)
-
             ssbo = SSBO(weight[:,i])
+            
+        # for kernels in weight:#keep the shape to 3d spartial layout.
+        #     npimgs = [k for k in kernels]
+        #     ssbo = SSBO(kernels)            
+            tex_arr = TextureArray(npimgs)
+            print(tex_arr.layer_count,'layers')
+            print(ssbo.size,'ssbo size')
+            self.tex_kernels.append(tex_arr)
             self.ssbo_kernels.append(ssbo)
-        
-        #keep the shape to 3d spartial layout.
-        # for kernels in weight:
 
 
         
@@ -678,11 +677,21 @@ layout(r32f, binding = 0) uniform writeonly image2DArray img;
 //layout(r32f, binding = 1) uniform readonly image2DArray kernels;
 layout(r32f, binding = 2) uniform readonly image2DArray in_img;
 
-layout(std430, binding = 1) buffer readonly Kernels {
+layout(std430, binding = 1) readonly buffer Kernels {
     float kernels[];
 };
 
+shared float kernel[9];
+
 void main() {
+    //we have long kernels 1D ssbo
+    //and dispatched z = out_channels.
+
+    int lid = int(gl_LocalInvocationIndex);
+    if (lid < 9) {
+        kernel[lid] = kernels[lid];
+    }
+
     //early discard if coords..
     ivec3 coord = ivec3(gl_GlobalInvocationID.xyz); // layer=0
     
@@ -691,7 +700,8 @@ void main() {
     //ivec3 size = imageSize(in_img);
     //ivec3 in_coord = ivec3(gl_GlobalInvocationID.xy, 0); // layer=0
     //float val = imageLoad(in_img, in_coord).r;
-    //imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
+    float val = kernel[lid];
+    imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
 """
 compute_conv2d = ComputeShader(compute_src_conv2d)
@@ -786,7 +796,7 @@ def on_draw():
     for i,tex_arr in enumerate(conv2d.tex_kernels):
         # sha_rect.set_uniform3('Coords',(-2, -i, 0))
         sha_rect.set_uniform3('Coords',(-2, 0, 2-i*0.5))
-        tex_arr.bind()        
+        tex_arr.bind()
         glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
     
     sha_rect.set_uniform('AddSize',1)
