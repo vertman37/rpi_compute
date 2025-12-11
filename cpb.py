@@ -664,8 +664,8 @@ layout(r32f, binding = 0) uniform writeonly image2DArray img;
 
 void main() {
     //early discard if coords..
-    ivec3 coord = ivec3(gl_GlobalInvocationID.xy, gl_WorkGroupID.z); // layer=0
-    float val = float(gl_LocalInvocationID.x)/32.0 + float(gl_LocalInvocationID.y)/32.0;
+    ivec3 coord = ivec3(gl_GlobalInvocationID.xy, gl_GlobalInvocationID.z); // layer=0
+    float val = float(gl_LocalInvocationID.x+gl_LocalInvocationID.y)/2.0/16.0;
     imageStore(img, coord, vec4(val, 0.0, 0.0, 0.0)); // R
 }
 """
