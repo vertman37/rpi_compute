@@ -237,8 +237,9 @@ class TextureArray:
     def bind(self):
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D_ARRAY, self.ID)
-    def bind_compute(self):
-        glBindImageTexture(0, self.ID, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32F)
+    def bind_compute(self,unit):
+        glBindImageTexture(unit, self.ID, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32F)
+        #unit,texture,level,layered,layer,access,format
         #GL_TRUE for layered→ array all layers..?
 
 
@@ -623,11 +624,13 @@ class Conv2d:
 
         # for i in range(in_ch):
         #keep the shape to 3d spartial layout.
-        self.tex_arrs = []
-        for kernels in weight:
-            npimgs = [k for k in kernels]
+        self.tex_kernels = []
+        # for kernels in weight:
+        #break the spartial layout!        
+        for i in range(in_ch):
+            npimgs = [k for k in weight[:,i]]
             tex_arr = TextureArray(npimgs)
-            self.tex_arrs.append(tex_arr)
+            self.tex_kernels.append(tex_arr)
 
         self.weight = weight
         #we need output layers, too.-> not here! unknown to input.
@@ -661,6 +664,7 @@ uniform float dt;
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(r32f, binding = 0) uniform writeonly image2DArray img;
+layout(r32f, binding = 1) uniform readonly image2DArray kernels;
 
 void main() {
     //early discard if coords..
@@ -695,8 +699,10 @@ conv1_weight = data['conv1_weight']
 
 conv2d = Conv2d(conv1_weight, outsize=28)
 
-conv2d.tex_outputs[0].bind_compute()
+conv2d.tex_outputs[0].bind_compute(0)
+conv2d.tex_kernels[0].bind_compute(1)
 compute_conv2d.dispatch(2,2,4)
+
 
 test_data = np.load("fmnist_test_normalized.npz")
 imgs = test_data["images"]        # (N,1,28,28)
@@ -751,19 +757,19 @@ def on_draw():
     # tex_arr.bind()
     # glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
     
-    for i,tex_arr in enumerate(conv2d.tex_arrs):
+    for i,tex_arr in enumerate(conv2d.tex_kernels):
         # sha_rect.set_uniform3('Coords',(-2, -i, 0))
         sha_rect.set_uniform3('Coords',(-2, 0, 2-i*0.5))
         tex_arr.bind()        
         glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
-
+    
     sha_rect.set_uniform('AddSize',1)
     for i,tex_arr in enumerate(conv2d.tex_outputs):
         # sha_rect.set_uniform3('Coords',(-2, -i, 0))
         sha_rect.set_uniform3('Coords',(1.5, 0, 2-i*0.5))
         tex_arr.bind()
         glDrawArrays(GL_TRIANGLES, 0, 6*tex_arr.layer_count)#6=2 triangles.
-
+        
     sha_rect.set_uniform3('Coords',(-7,0,0))
     sha_rect.set_uniform('AddSize',2)
     tex_arr2.bind()
